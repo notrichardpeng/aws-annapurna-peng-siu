@@ -1,0 +1,20 @@
+# This file configures Prometheus to scrape metrics.
+
+global:
+  scrape_interval: 15s # Scrape metrics every 15 seconds.
+
+scrape_configs:
+  # Job 1: Scrape Prometheus itself
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Job 2: Scrape our Model API
+  - job_name: 'model-api'
+    scrape_interval: 5s # Scrape our API more frequently
+    metrics_path: /metrics # The endpoint we added in app.py
+    static_configs:
+      # 'model-api:8000' is the target.
+      # 'model-api' is the service name from docker-compose.yml.
+      # Prometheus will discover all container IPs for this service.
+      - targets: ['model-api:8000']
