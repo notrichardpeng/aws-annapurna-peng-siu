@@ -1,0 +1,64 @@
+# This Docker Compose file defines your entire multi-container application.
+version: '3.8'
+
+services:
+  # Service 1: The Model API (Our FastAPI App)
+  # This is the service we will scale.
+  model-api:
+    build: .  # Build from the Dockerfile in the current directory
+    image: model-api-service  # Name the resulting image
+    expose:
+      - "8000"  # Expose port 8000 ONLY to other services on the network
+    networks:
+      - app-network  # Connect to our custom network
+
+  # Service 2: The Load Balancer (NGINX)
+  # This is the *only* entry point for users.
+  nginx:
+    image: nginx:1.25-alpine  # Use the lightweight NGINX image
+    ports:
+      - "80:80"  # Map host port 80 to container port 80
+    volumes:
+      # Mount our NGINX config into the container
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+    networks:
+      - app-network
+    depends_on:
+      - model-api  # Wait for the API to be ready before starting
+
+  # Service 3: The Metrics Database (Prometheus)
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    ports:
+      - "9090:9090"  # Expose the Prometheus dashboard
+    volumes:
+      # Mount our Prometheus config
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      # Make Prometheus data persistent
+      - prometheus_data:/prometheus
+    networks:
+      - app-network
+    depends_on:
+      - model-api
+
+  # Service 4: The Visualization Dashboard (Grafana)
+  grafana:
+    image: grafana/grafana:11.1.0
+    ports:
+      - "3000:3000"  # Expose the Grafana dashboard
+    volumes:
+      - grafana_data:/var/lib/grafana  # Make Grafana data persistent
+    networks:
+      - app-network
+    depends_on:
+      - prometheus
+
+# Define the persistent volumes
+volumes:
+  prometheus_data:
+  grafana_data:
+
+# Define the custom network
+networks:
+  app-network:
+    driver: bridge
