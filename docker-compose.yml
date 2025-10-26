@@ -33,27 +33,23 @@ services:
     ports:
       - "9090:9090"  # Expose the Prometheus dashboard
     environment:
-      # CRITICAL: Inject the environment variable from the host/secrets manager
-      - GRAFANA_PROMETHEUS_PASSWORD
+      - GRAFANA_USER=${GRAFANA_USER}
+      - GRAFANA_API_KEY=${GRAFANA_API_KEY}
     volumes:
-      # Mount our Prometheus config (assumes prometheus/prometheus.yml uses password_file)
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
-      # Volume for the secrets file created at runtime
-      - ./secrets:/etc/prometheus/secrets
-      # Make Prometheus data persistent
       - prometheus_data:/prometheus
     networks:
       - app-network
     depends_on:
       - model-api
-    
+
     entrypoint: /bin/sh
     command:
       - -c
       - |
-        echo "$$GRAFANA_PROMETHEUS_PASSWORD" > /etc/prometheus/secrets/grafana-password &&
-        chmod 600 /etc/prometheus/secrets/grafana-password &&
-        exec /bin/prometheus --config.file=/etc/prometheus/prometheus.yml --web.listen-address=:9090
+        # Substitute environment variables in config
+        envsubst < /etc/prometheus/prometheus.yml > /tmp/prometheus.yml &&
+        exec /bin/prometheus --config.file=/tmp/prometheus.yml --web.listen-address=:9090
 
   # Service 4: Elasticsearch (Data Store for Logs)
   elasticsearch:
