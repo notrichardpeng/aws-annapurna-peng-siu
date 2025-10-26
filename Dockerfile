@@ -6,6 +6,10 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Download and cache model in advance
+COPY load_model.py .
+RUN python load_model.py
+
 COPY . .
 
 # Expose FastAPI port
