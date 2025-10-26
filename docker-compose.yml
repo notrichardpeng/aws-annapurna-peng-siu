@@ -39,16 +39,16 @@ services:
       # Mount our Prometheus config (assumes prometheus/prometheus.yml uses password_file)
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
       # Volume for the secrets file created at runtime
-      - ./secrets:/etc/prometheus/secrets 
+      - ./secrets:/etc/prometheus/secrets
       # Make Prometheus data persistent
       - prometheus_data:/prometheus
     networks:
       - app-network
     depends_on:
       - model-api
-    
+
     # CRITICAL: Startup command to securely create the password file from the ENV var
-    command: 
+    command:
       - /bin/sh
       - -c
       - |
@@ -59,9 +59,50 @@ services:
         # Use 'exec' to replace the shell process with the final Prometheus process
         exec /bin/prometheus --config.file=/etc/prometheus/prometheus.yml --web.listen-address=:9090
 
+  # Service 4: Elasticsearch (Data Store for Logs)
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.12.0
+    environment:
+      - discovery.type=single-node
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+      - xpack.security.enabled=false
+    ports:
+      - "9200:9200"
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    networks:
+      - app-network
+
+  # Service 5: Logstash (Log Processor)
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.12.0
+    ports:
+      - "5044:5044"
+    volumes:
+      - ./logstash/logstash.conf:/usr/share/logstash/pipeline/logstash.conf
+    environment:
+      - "LS_JAVA_OPTS=-Xmx256m -Xms256m"
+    networks:
+      - app-network
+    depends_on:
+      - elasticsearch
+
+  # Service 6: Kibana (Visualization Dashboard)
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.12.0
+    ports:
+      - "5601:5601"
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    networks:
+      - app-network
+    depends_on:
+      - elasticsearch
+
 # Define the persistent volumes
 volumes:
   prometheus_data:
+  elasticsearch_data:
 
 # Define the custom network
 networks:

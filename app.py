@@ -1,5 +1,7 @@
 import os
+import time
 import uvicorn
+import psutil
 import numpy as np
 
 from fastapi import FastAPI, Request
@@ -9,6 +11,8 @@ from transformers import AutoTokenizer
 from onnxruntime import InferenceSession
 from huggingface_hub import hf_hub_download
 from prometheus_fastapi_instrumentator import Instrumentator
+from starlette.middleware.base import BaseHTTPMiddleware
+from logging_config import setup_logger
 
 # --- 1. Define Constants ---
 
@@ -19,7 +23,11 @@ LOCAL_ONNX_PATH = os.path.join(LOCAL_CACHE_DIR, MODEL_REPO, "onnx/decoder_model.
 LOCAL_TOKENIZER_PATH = os.path.join(LOCAL_CACHE_DIR, TOKENIZER_REPO)
 
 
-# --- 2. Pydantic Models for Input and Output ---
+# --- 2. Configure Logging ---
+logger = setup_logger()
+
+
+# --- 3. Pydantic Models for Input and Output ---
 
 class PromptInput(BaseModel):
     prompt: str
@@ -31,7 +39,47 @@ class GenerationOutput(BaseModel):
     generated_text: str
     tokens_generated: int
 
-# --- 3. Model Loading with Lifespan ---
+# --- 4. Metrics Tracking Middleware ---
+
+class MetricsMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        if request.url.path == "/generate":
+            start_time = time.time()
+
+            # Capture resource utilization before request
+            process = psutil.Process()
+            cpu_before = process.cpu_percent()
+            memory_before = process.memory_info().rss / 1024 / 1024  # MB
+
+            # Process the request
+            response = await call_next(request)
+
+            # Calculate metrics
+            latency = time.time() - start_time
+            cpu_after = process.cpu_percent()
+            memory_after = process.memory_info().rss / 1024 / 1024  # MB
+
+            # Log metrics with structured data
+            logger.info(
+                "Inference request completed",
+                extra={
+                    "event": "inference",
+                    "latency_ms": round(latency * 1000, 2),
+                    "cpu_usage_percent": round((cpu_before + cpu_after) / 2, 2),
+                    "memory_mb": round(memory_after, 2),
+                    "memory_delta_mb": round(memory_after - memory_before, 2),
+                    "path": request.url.path,
+                    "method": request.method,
+                    "status_code": response.status_code
+                }
+            )
+
+            return response
+        else:
+            return await call_next(request)
+
+
+# --- 5. Model Loading with Lifespan ---
 
 model_state = {}
 
@@ -41,47 +89,50 @@ async def lifespan(app: FastAPI):
     Asynchronous context manager for FastAPI's lifespan event.
     Model loading now reads from the local filesystem (built by Docker).
     """
-    print("Application startup...")
-    print(f"Loading DistilGPT2 from local cache: {LOCAL_ONNX_PATH}")
+    logger.info("Application startup...")
+    logger.info(f"Loading DistilGPT2 from local cache: {LOCAL_ONNX_PATH}")
 
     try:
         # Load the ONNX model from the local path, which was placed here by the Docker build
         model_state["session"] = InferenceSession(
-            LOCAL_ONNX_PATH, 
+            LOCAL_ONNX_PATH,
             providers=['CPUExecutionProvider']
         )
-        
+
         # Load the tokenizer from the local path
         model_state["tokenizer"] = AutoTokenizer.from_pretrained(LOCAL_TOKENIZER_PATH)
-        
+
         # Set pad token to eos token
         if model_state["tokenizer"].pad_token is None:
             model_state["tokenizer"].pad_token = model_state["tokenizer"].eos_token
-        
+
         # Get ONNX input/output names to verify and use in the loop
         model_state["input_names"] = [inp.name for inp in model_state["session"].get_inputs()]
-        
-        print("✓ Model and tokenizer loaded successfully from local cache.")
-        print("✓ Startup time drastically reduced by pre-caching weights in Docker build.")
-        
+
+        logger.info("Model and tokenizer loaded successfully from local cache")
+        logger.info("Startup time drastically reduced by pre-caching weights in Docker build")
+
     except Exception as e:
-        print(f"FATAL: Error loading model from local path ({LOCAL_ONNX_PATH}).")
-        print(f"Error details: {e}")
+        logger.error(f"FATAL: Error loading model from local path ({LOCAL_ONNX_PATH})",
+                    extra={"error": str(e), "event": "startup_error"})
         raise
-    
+
     yield
-    
-    print("Application shutdown...")
+
+    logger.info("Application shutdown...")
     model_state.clear()
 
 
 # FastAPI App
 app = FastAPI(
     title="DistilGPT2 Text Generation API",
-    description="ONNX-optimized text generation with Prometheus metrics",
+    description="ONNX-optimized text generation with Prometheus metrics and ELK logging",
     version="1.0.0",
     lifespan=lifespan
 )
+
+# Add Metrics Middleware
+app.add_middleware(MetricsMiddleware)
 
 # Add Prometheus Metrics
 Instrumentator().instrument(app).expose(app)
@@ -123,6 +174,14 @@ def generate(request: Request, data: PromptInput):
     Supports temperature-based sampling.
     """
     
+    logger.info("Generation request received",
+                extra={
+                    "event": "generate_request",
+                    "prompt_length": len(data.prompt),
+                    "max_new_tokens": data.max_new_tokens,
+                    "temperature": data.temperature
+                })
+
     # Get the model and tokenizer from state
     session = model_state["session"]
     tokenizer = model_state["tokenizer"]
@@ -186,6 +245,13 @@ def generate(request: Request, data: PromptInput):
 
     # --- 3. Decode ---
     generated_text = tokenizer.decode(input_ids[0], skip_special_tokens=True)
+
+    logger.info("Generation completed successfully",
+                extra={
+                    "event": "generate_success",
+                    "tokens_generated": tokens_generated,
+                    "output_length": len(generated_text)
+                })
 
     # --- 4. Return Response ---
     return GenerationOutput(

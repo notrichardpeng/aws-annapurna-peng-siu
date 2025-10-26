@@ -6,3 +6,5 @@ onnxruntime
 transformers
 huggingface-hub
 prometheus-fastapi-instrumentator
+python-logstash
+psutil
