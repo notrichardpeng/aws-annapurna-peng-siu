@@ -1,4 +1,3 @@
-# This Docker Compose file defines your entire multi-container application.
 version: '3.8'
 
 services:
@@ -11,6 +10,8 @@ services:
       - "8000"  # Expose port 8000 ONLY to other services on the network
     networks:
       - app-network  # Connect to our custom network
+    # Note: If you plan to scale, you should not set container_name here, 
+    # but rely on Docker Compose's naming.
 
   # Service 2: The Load Balancer (NGINX)
   # This is the *only* entry point for users.
@@ -31,32 +32,36 @@ services:
     image: prom/prometheus:v2.53.0
     ports:
       - "9090:9090"  # Expose the Prometheus dashboard
+    environment:
+      # CRITICAL: Inject the environment variable from the host/secrets manager
+      - GRAFANA_PROMETHEUS_PASSWORD
     volumes:
-      # Mount our Prometheus config
+      # Mount our Prometheus config (assumes prometheus/prometheus.yml uses password_file)
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      # Volume for the secrets file created at runtime
+      - ./secrets:/etc/prometheus/secrets 
       # Make Prometheus data persistent
       - prometheus_data:/prometheus
     networks:
       - app-network
     depends_on:
       - model-api
-
-  # Service 4: The Visualization Dashboard (Grafana)
-  grafana:
-    image: grafana/grafana:11.1.0
-    ports:
-      - "3000:3000"  # Expose the Grafana dashboard
-    volumes:
-      - grafana_data:/var/lib/grafana  # Make Grafana data persistent
-    networks:
-      - app-network
-    depends_on:
-      - prometheus
+    
+    # CRITICAL: Startup command to securely create the password file from the ENV var
+    command: 
+      - /bin/sh
+      - -c
+      - |
+        # Write the secret to the file
+        echo "$$GRAFANA_PROMETHEUS_PASSWORD" > /etc/prometheus/secrets/grafana-password &&
+        # Restrict permissions for security
+        chmod 600 /etc/prometheus/secrets/grafana-password &&
+        # Use 'exec' to replace the shell process with the final Prometheus process
+        exec /bin/prometheus --config.file=/etc/prometheus/prometheus.yml --web.listen-address=:9090
 
 # Define the persistent volumes
 volumes:
   prometheus_data:
-  grafana_data:
 
 # Define the custom network
 networks:

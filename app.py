@@ -1,5 +1,7 @@
+import os
 import uvicorn
 import numpy as np
+
 from fastapi import FastAPI, Request
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
@@ -10,12 +12,12 @@ from prometheus_fastapi_instrumentator import Instrumentator
 
 # --- 1. Define Constants ---
 
-# Using Xenova's ONNX-optimized version of distilgpt2
 MODEL_REPO = "Xenova/distilgpt2"
-ONNX_FILE = "onnx/decoder_model.onnx"
-
-# Alternative: Use the base model name for tokenizer
 TOKENIZER_REPO = "distilgpt2"
+LOCAL_CACHE_DIR = "./model_cache"
+LOCAL_ONNX_PATH = os.path.join(LOCAL_CACHE_DIR, MODEL_REPO, "onnx/decoder_model.onnx")
+LOCAL_TOKENIZER_PATH = os.path.join(LOCAL_CACHE_DIR, TOKENIZER_REPO)
+
 
 # --- 2. Pydantic Models for Input and Output ---
 
@@ -37,39 +39,34 @@ model_state = {}
 async def lifespan(app: FastAPI):
     """
     Asynchronous context manager for FastAPI's lifespan event.
+    Model loading now reads from the local filesystem (built by Docker).
     """
     print("Application startup...")
-    print("Downloading and loading DistilGPT2 ONNX model and tokenizer...")
+    print(f"Loading DistilGPT2 from local cache: {LOCAL_ONNX_PATH}")
 
     try:
-        # Download the ONNX model file from Xenova's repo
-        model_path = hf_hub_download(
-            repo_id=MODEL_REPO, 
-            filename=ONNX_FILE
-        )
-        
-        # Load the ONNX model into an InferenceSession
+        # Load the ONNX model from the local path, which was placed here by the Docker build
         model_state["session"] = InferenceSession(
-            model_path, 
+            LOCAL_ONNX_PATH, 
             providers=['CPUExecutionProvider']
         )
         
-        # Load the tokenizer (using the original distilgpt2)
-        model_state["tokenizer"] = AutoTokenizer.from_pretrained(TOKENIZER_REPO)
+        # Load the tokenizer from the local path
+        model_state["tokenizer"] = AutoTokenizer.from_pretrained(LOCAL_TOKENIZER_PATH)
         
-        # Set pad token to eos token (GPT-2 doesn't have a pad token by default)
+        # Set pad token to eos token
         if model_state["tokenizer"].pad_token is None:
             model_state["tokenizer"].pad_token = model_state["tokenizer"].eos_token
         
-        print("✓ Model and tokenizer loaded successfully.")
-        print(f"✓ ONNX model inputs: {[inp.name for inp in model_state['session'].get_inputs()]}")
-        print(f"✓ ONNX model outputs: {[out.name for out in model_state['session'].get_outputs()]}")
+        # Get ONNX input/output names to verify and use in the loop
+        model_state["input_names"] = [inp.name for inp in model_state["session"].get_inputs()]
+        
+        print("✓ Model and tokenizer loaded successfully from local cache.")
+        print("✓ Startup time drastically reduced by pre-caching weights in Docker build.")
         
     except Exception as e:
-        print(f"Error loading model: {e}")
-        print("\nNote: If ONNX file not found, you may need to:")
-        print("1. Export the model yourself using optimum-cli")
-        print("2. Or use a different pre-converted ONNX model")
+        print(f"FATAL: Error loading model from local path ({LOCAL_ONNX_PATH}).")
+        print(f"Error details: {e}")
         raise
     
     yield
@@ -78,8 +75,7 @@ async def lifespan(app: FastAPI):
     model_state.clear()
 
 
-# --- 4. Create FastAPI App ---
-
+# FastAPI App
 app = FastAPI(
     title="DistilGPT2 Text Generation API",
     description="ONNX-optimized text generation with Prometheus metrics",
@@ -87,10 +83,8 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# --- 5. Add Prometheus Metrics ---
+# Add Prometheus Metrics
 Instrumentator().instrument(app).expose(app)
-
-# --- 6. Define API Endpoints ---
 
 @app.get("/")
 def read_root():

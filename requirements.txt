@@ -1,7 +1,8 @@
 fastapi
-uvicorn[standard]
+uvicorn
+pydantic
+numpy
 onnxruntime
 transformers
-huggingface_hub
-numpy
+huggingface-hub
 prometheus-fastapi-instrumentator
