@@ -1,65 +1,62 @@
 version: '3.8'
 
 services:
-  # Service 1: The Model API (Our FastAPI App)
-  # This is the service we will scale.
+  # FastAPI wrapper around vLLM
   model-api:
-    build: .  # Build from the Dockerfile in the current directory
-    image: model-api-service  # Name the resulting image
+    build: .
+    image: model-api-service
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
     expose:
-      - "8000"  # Expose port 8000 ONLY to other services on the network
-    networks:
-      - app-network  # Connect to our custom network
-    # Note: If you plan to scale, you should not set container_name here, 
-    # but rely on Docker Compose's naming.
-
-  # Service 2: The Load Balancer (NGINX)
-  # This is the *only* entry point for users.
-  nginx:
-    image: nginx:1.25-alpine  # Use the lightweight NGINX image
-    ports:
-      - "80:80"  # Map host port 80 to container port 80
-    volumes:
-      # Mount our NGINX config into the container
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+      - "8000"
     networks:
       - app-network
-    depends_on:
-      - model-api  # Wait for the API to be ready before starting
 
-  # Service 3: The Metrics Database (Prometheus)
-  prometheus:
-    image: prom/prometheus:v2.53.0
+  # NGINX Load Balancer
+  nginx:
+    image: nginx:1.25-alpine
     ports:
-      - "9090:9090"  # Expose the Prometheus dashboard
-    environment:
-      # CRITICAL: Inject the environment variable from the host/secrets manager
-      - GRAFANA_PROMETHEUS_PASSWORD
+      - "80:80"
     volumes:
-      # Mount our Prometheus config (assumes prometheus/prometheus.yml uses password_file)
-      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
-      # Volume for the secrets file created at runtime
-      - ./secrets:/etc/prometheus/secrets 
-      # Make Prometheus data persistent
-      - prometheus_data:/prometheus
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
     networks:
       - app-network
     depends_on:
       - model-api
-        
+
+  # Prometheus for metrics
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+      - ./secrets:/etc/prometheus/secrets
+    networks:
+      - app-network
+    depends_on:
+      - model-api
+    environment:
+      - GRAFANA_PROMETHEUS_PASSWORD=${GRAFANA_PROMETHEUS_PASSWORD}
     entrypoint: /bin/sh
-    command: 
+    command:
       - -c
       - |
         echo "$$GRAFANA_PROMETHEUS_PASSWORD" > /etc/prometheus/secrets/grafana-password &&
         chmod 600 /etc/prometheus/secrets/grafana-password &&
         exec /bin/prometheus --config.file=/etc/prometheus/prometheus.yml --web.listen-address=:9090
 
-# Define the persistent volumes
 volumes:
   prometheus_data:
 
-# Define the custom network
 networks:
   app-network:
     driver: bridge
