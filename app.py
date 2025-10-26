@@ -2,7 +2,9 @@ import os
 import time
 import uvicorn
 import psutil
+import hashlib
 import numpy as np
+from functools import lru_cache
 
 from fastapi import FastAPI, Request
 from pydantic import BaseModel
@@ -25,6 +27,14 @@ LOCAL_TOKENIZER_PATH = os.path.join(LOCAL_CACHE_DIR, TOKENIZER_REPO)
 
 # --- 2. Configure Logging ---
 logger = setup_logger()
+
+# --- 2.5. Simple Response Cache ---
+response_cache = {}
+
+def get_cache_key(prompt: str, max_tokens: int, temp: float) -> str:
+    """Generate cache key from request parameters"""
+    cache_str = f"{prompt}_{max_tokens}_{temp}"
+    return hashlib.md5(cache_str.encode()).hexdigest()
 
 
 # --- 3. Pydantic Models for Input and Output ---
@@ -158,12 +168,23 @@ def read_root():
 def health_check():
     """
     Health check endpoint for monitoring.
+    Returns 200 if healthy, 503 if unhealthy.
     """
     is_healthy = "session" in model_state and "tokenizer" in model_state
+
+    if not is_healthy:
+        from fastapi import Response
+        return Response(
+            content='{"status": "unhealthy", "model_loaded": false}',
+            status_code=503,
+            media_type="application/json"
+        )
+
     return {
-        "status": "healthy" if is_healthy else "unhealthy",
+        "status": "healthy",
         "model_loaded": "session" in model_state,
-        "tokenizer_loaded": "tokenizer" in model_state
+        "tokenizer_loaded": "tokenizer" in model_state,
+        "cache_size": len(response_cache)
     }
 
 
@@ -181,6 +202,12 @@ def generate(request: Request, data: PromptInput):
                     "max_new_tokens": data.max_new_tokens,
                     "temperature": data.temperature
                 })
+
+    # Check cache first
+    cache_key = get_cache_key(data.prompt, data.max_new_tokens, data.temperature)
+    if cache_key in response_cache:
+        logger.info("Cache hit", extra={"event": "cache_hit"})
+        return response_cache[cache_key]
 
     # Get the model and tokenizer from state
     session = model_state["session"]
@@ -254,11 +281,17 @@ def generate(request: Request, data: PromptInput):
                 })
 
     # --- 4. Return Response ---
-    return GenerationOutput(
+    response = GenerationOutput(
         prompt=data.prompt,
         generated_text=generated_text,
         tokens_generated=tokens_generated
     )
+
+    # Cache the response (limit cache size to 100 entries)
+    if len(response_cache) < 100:
+        response_cache[cache_key] = response
+
+    return response
 
 
 # --- 7. Run the Application ---
