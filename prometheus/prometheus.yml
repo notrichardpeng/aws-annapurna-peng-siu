@@ -1,20 +1,22 @@
-# This file configures Prometheus to scrape metrics.
+# Prometheus configuration to push metrics to Grafana
 
 global:
-  scrape_interval: 15s # Scrape metrics every 15 seconds.
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+remote_write:
+  - url: https://prometheus-prod-36-prod-us-west-0.grafana.net/api/prom/push
+    basic_auth:
+      username: 2758303
+      password: GRAFANA_PROMETHEUS_PASSWORD
 
 scrape_configs:
-  # Job 1: Scrape Prometheus itself
   - job_name: 'prometheus'
     static_configs:
       - targets: ['localhost:9090']
 
-  # Job 2: Scrape our Model API
   - job_name: 'model-api'
-    scrape_interval: 5s # Scrape our API more frequently
-    metrics_path: /metrics # The endpoint we added in app.py
-    static_configs:
-      # 'model-api:8000' is the target.
-      # 'model-api' is the service name from docker-compose.yml.
-      # Prometheus will discover all container IPs for this service.
+    scrape_interval: 5s
+    metrics_path: /metrics
+    static_configs:      
       - targets: ['model-api:8000']
