@@ -46,17 +46,13 @@ services:
       - app-network
     depends_on:
       - model-api
-
-    # CRITICAL: Startup command to securely create the password file from the ENV var
+    
+    entrypoint: /bin/sh
     command:
-      - /bin/sh
       - -c
       - |
-        # Write the secret to the file
         echo "$$GRAFANA_PROMETHEUS_PASSWORD" > /etc/prometheus/secrets/grafana-password &&
-        # Restrict permissions for security
         chmod 600 /etc/prometheus/secrets/grafana-password &&
-        # Use 'exec' to replace the shell process with the final Prometheus process
         exec /bin/prometheus --config.file=/etc/prometheus/prometheus.yml --web.listen-address=:9090
 
   # Service 4: Elasticsearch (Data Store for Logs)

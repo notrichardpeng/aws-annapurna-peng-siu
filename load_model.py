@@ -1,5 +1,3 @@
-# download_model.py
-
 import os
 from huggingface_hub import snapshot_download
 from transformers import AutoTokenizer
@@ -9,13 +7,11 @@ TOKENIZER_REPO = "distilgpt2"
 LOCAL_CACHE_DIR = "./model_cache" 
 
 def main():
-    """Downloads and caches the model and tokenizer files locally."""
     print(f"Starting download and caching for {MODEL_REPO}...")
     
     snapshot_download(
         repo_id=MODEL_REPO,
         local_dir=os.path.join(LOCAL_CACHE_DIR, MODEL_REPO),
-        # Only download the ONNX files to keep the image size minimal
         allow_patterns=["onnx/*", "*.json"],
         ignore_patterns=["*.pt", "*.bin", "*.safetensors"] 
     )
