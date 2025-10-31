@@ -136,27 +136,35 @@ Automatically tracked by `prometheus-fastapi-instrumentator`:
 
 ### Custom Metrics (via Middleware)
 Logged to ELK on every `/generate` request:
-- `latency_ms`: Inference time
-- `cpu_usage_percent`: CPU during request
-- `memory_mb`: Memory footprint
-- `tokens_generated`: Output length
-- `throughput_tokens_per_sec`: Calculated by Logstash
+- `latency_ms`: Inference time (median: ~10.8ms in production)
+- `cpu_usage_percent`: CPU during request (median: ~50.5%)
+- `memory_delta_mb`: Memory footprint changes
+- `prompt_length`: Input token count (median: 15)
+- `output_length`: Generated token count
+- `tokens_per_second`: Generation throughput
+- `status_code`, `method`, `path`: HTTP metadata
+- `event`, `level`, `message`: Log context
 
 ### Kibana Dashboards
 1. Navigate to http://localhost:5601
 2. Create index pattern: `model-api-logs-*`
-3. Visualize:
+3. Query logs using KQL syntax (e.g., `latency_ms > 100 AND status_code >= 400`)
+4. Visualize:
    - Latency over time (line chart)
-   - Request volume (bar chart)
+   - Request volume (bar chart) - tracks ~30K+ log entries
    - Error rate (gauge)
    - Throughput distribution (histogram)
+   - CPU and memory trends by time window
 
 ### Grafana Cloud
 Metrics are pushed to Grafana Cloud for centralized monitoring:
-- Real-time request rates
-- Latency percentiles (p50, p95, p99)
-- Resource utilization trends
-- Alerting on error rate spikes
+- **API Health**: Real-time health checks with response time tracking
+- **Request rates**: Total requests and throughput over time
+- **Request breakdown**: By handler type (generate, register, inference) and HTTP method
+- **Latency percentiles**: p50, p95, p99 response times
+- **Resource utilization**: CPU and memory trends
+- **Status codes**: 2xx, 4xx, 5xx tracking for error monitoring
+- **Alerting**: Configure alerts on error rate spikes or latency thresholds
 
 ## Project Structure
 
